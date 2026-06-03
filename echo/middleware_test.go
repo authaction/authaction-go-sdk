@@ -207,7 +207,7 @@ func TestEchoOptionalAuth_PassesThroughWithoutToken(t *testing.T) {
 
 	e := echo.New()
 	e.Use(authactionecho.OptionalAuth(c))
-	e.GET("/public", func(ctx echo.Context) error {
+	e.GET("/api", func(ctx echo.Context) error {
 		_, ok := authactionecho.ClaimsFromContext(ctx)
 		if ok {
 			return ctx.String(http.StatusInternalServerError, "unexpected claims")
@@ -230,7 +230,7 @@ func TestEchoOptionalAuth_AttachesClaimsWhenPresent(t *testing.T) {
 
 	e := echo.New()
 	e.Use(authactionecho.OptionalAuth(c))
-	e.GET("/public", func(ctx echo.Context) error {
+	e.GET("/api", func(ctx echo.Context) error {
 		claims, ok := authactionecho.ClaimsFromContext(ctx)
 		if !ok {
 			return ctx.String(http.StatusUnauthorized, "no claims")
