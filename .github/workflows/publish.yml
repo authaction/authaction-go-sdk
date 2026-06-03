@@ -1,7 +1,6 @@
 name: Tag release
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 jobs:
   tag:
     runs-on: ubuntu-latest
