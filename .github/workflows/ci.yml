@@ -7,28 +7,73 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  # ── go.sum hygiene ────────────────────────────────────────────────────────────
+  tidy:
+    name: Tidy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go: ["1.22", "1.23"]
-
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: go mod tidy
+        run: go mod tidy
+      - name: Check go.mod and go.sum are up to date
+        run: git diff --exit-code go.mod go.sum
 
+  # ── lint ──────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+  # ── test ──────────────────────────────────────────────────────────────────────
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "1.23"]
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
           cache: true
+      - name: Download modules
+        run: go mod download
+      - name: Test with race detector
+        run: go test -race -count=1 -timeout=120s -coverprofile=coverage.out ./...
+      - name: Upload coverage
+        if: matrix.go == '1.23'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
 
-      - name: Tidy
-        run: go mod tidy
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test (core + gin + echo)
-        run: go test -race -count=1 -timeout=120s ./...
-
-      - name: Build
+  # ── build ─────────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Build all packages
         run: go build ./...
