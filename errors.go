@@ -1,21 +1,13 @@
 package authaction
 
-import "errors"
+import "fmt"
 
-var (
-	// ErrTokenMissing is returned when the Authorization header is absent or
-	// does not contain a Bearer token.
-	ErrTokenMissing = errors.New("authaction: missing Bearer token")
+// TokenExpiredError is returned when the JWT exp claim is in the past.
+type TokenExpiredError struct{ Message string }
 
-	// ErrTokenInvalid is returned when the token fails signature or claims
-	// validation (wrong issuer, audience, algorithm, etc.).
-	ErrTokenInvalid = errors.New("authaction: token is invalid")
+func (e *TokenExpiredError) Error() string { return fmt.Sprintf("authaction: token expired: %s", e.Message) }
 
-	// ErrTokenExpired is returned when a structurally valid token has passed
-	// its expiry time.
-	ErrTokenExpired = errors.New("authaction: token has expired")
+// TokenInvalidError is returned when the JWT signature, issuer, audience, or structure is invalid.
+type TokenInvalidError struct{ Message string }
 
-	// ErrJWKSUnavailable is returned when the JWKS endpoint cannot be reached
-	// or returns a non-200 response.
-	ErrJWKSUnavailable = errors.New("authaction: JWKS endpoint unavailable")
-)
+func (e *TokenInvalidError) Error() string { return fmt.Sprintf("authaction: invalid token: %s", e.Message) }

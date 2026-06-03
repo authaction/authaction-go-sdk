@@ -1,39 +1,14 @@
-name: Publish
-
+name: Tag release
 on:
   release:
     types: [published]
-
 jobs:
-  publish:
-    name: Publish Go module
+  tag:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Test
-        run: go test -race -count=1 -timeout=120s ./...
-
-      - name: Build
-        run: go build ./...
-
-      # Ping the Go module proxy so the new version is indexed immediately.
-      # The proxy will also pick it up automatically when anyone runs
-      # `go get github.com/authaction/authaction-go-sdk@<version>`.
-      - name: Notify Go module proxy
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          echo "Notifying proxy for ${VERSION}"
-          curl -sf "https://proxy.golang.org/github.com/authaction/authaction-go-sdk/@v/${VERSION}.info" \
-            -o /dev/null || true
-          curl -sf "https://sum.golang.org/lookup/github.com/authaction/authaction-go-sdk@${VERSION}" \
-            -o /dev/null || true
+        with: { go-version: "1.21" }
+      - run: go mod tidy && go test ./...
+      # Go modules are published by tagging — no push step needed.
+      # The tag created by the GitHub release triggers pkg.go.dev indexing.

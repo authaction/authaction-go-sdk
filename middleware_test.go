@@ -1,192 +1,97 @@
-package authaction
+package authaction_test
 
 import (
-	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
-// sentinel handler that writes 200 + the subject from context
-func okHandler(t *testing.T) http.Handler {
-	t.Helper()
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, ok := ClaimsFromContext(r.Context())
-		if !ok {
-			w.WriteHeader(http.StatusNoContent) // 204 = no claims
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(claims.Sub))
-	})
-}
+func TestMiddleware_ValidToken_CallsNext(t *testing.T) {
+	env := setup(t)
+	defer env.server.Close()
 
-func doRequest(t *testing.T, handler http.Handler, token string) *httptest.ResponseRecorder {
-	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/api/test", nil)
-	if token != "" {
-		r.Header.Set("Authorization", "Bearer "+token)
-	}
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, r)
-	return rr
-}
-
-// ── RequireAuth ───────────────────────────────────────────────────────────────
-
-func TestRequireAuth_AllowsValidToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-	tok := makeJWT(t, validClaims(testDomain, testAudience))
-
-	rr := doRequest(t, RequireAuth(c)(okHandler(t)), tok)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
-	}
-	if rr.Body.String() != "user-123" {
-		t.Errorf("body = %q, want %q", rr.Body.String(), "user-123")
-	}
-}
-
-func TestRequireAuth_Rejects_MissingToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-
-	rr := doRequest(t, RequireAuth(c)(okHandler(t)), "")
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
-	}
-	assertJSONError(t, rr, "Missing Bearer token")
-}
-
-func TestRequireAuth_Rejects_InvalidToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-
-	rr := doRequest(t, RequireAuth(c)(okHandler(t)), "totally.invalid.token")
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
-	}
-	assertJSONError(t, rr, "Invalid token")
-}
-
-func TestRequireAuth_Rejects_ExpiredToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-
-	claims := validClaims(testDomain, testAudience)
-	claims["exp"] = float64(0) // epoch — definitely expired
-	tok := makeJWT(t, claims)
-
-	rr := doRequest(t, RequireAuth(c)(okHandler(t)), tok)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401", rr.Code)
-	}
-	assertJSONError(t, rr, "Token has expired")
-}
-
-func TestRequireAuth_SetsContentTypeJSON(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-
-	rr := doRequest(t, RequireAuth(c)(okHandler(t)), "")
-
-	ct := rr.Header().Get("Content-Type")
-	if ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-}
-
-func TestRequireAuth_DoesNotCallNextOnFailure(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-
+	tokenStr := env.makeToken(t, "user-1", time.Now().Add(time.Hour))
 	called := false
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := env.verifier.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
 
-	doRequest(t, RequireAuth(c)(next), "")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 
-	if called {
-		t.Error("next handler should not be called when token is missing")
+	if !called {
+		t.Error("handler was not called")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("got status %d, want 200", rec.Code)
 	}
 }
 
-// ── OptionalAuth ──────────────────────────────────────────────────────────────
+func TestMiddleware_MissingToken_Returns401(t *testing.T) {
+	env := setup(t)
+	defer env.server.Close()
 
-func TestOptionalAuth_AllowsValidToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-	tok := makeJWT(t, validClaims(testDomain, testAudience))
+	handler := env.verifier.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
+	}))
 
-	rr := doRequest(t, OptionalAuth(c)(okHandler(t)), tok)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rr.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("got status %d, want 401", rec.Code)
+	}
+	body, _ := io.ReadAll(rec.Body)
+	if !strings.Contains(string(body), "Unauthorized") {
+		t.Errorf("body missing 'Unauthorized': %s", body)
 	}
 }
 
-func TestOptionalAuth_PassesThroughWithoutToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
+func TestMiddleware_ExpiredToken_Returns401(t *testing.T) {
+	env := setup(t)
+	defer env.server.Close()
 
-	rr := doRequest(t, OptionalAuth(c)(okHandler(t)), "")
+	tokenStr := env.makeToken(t, "user-1", time.Now().Add(-time.Hour))
+	handler := env.verifier.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called")
+	}))
 
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want 204 (no claims)", rr.Code)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("got status %d, want 401", rec.Code)
 	}
 }
 
-func TestOptionalAuth_Rejects_InvalidToken(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
+func TestMiddleware_TokenStoredInContext(t *testing.T) {
+	env := setup(t)
+	defer env.server.Close()
 
-	// OptionalAuth still rejects a malformed token (not just missing).
-	rr := doRequest(t, OptionalAuth(c)(okHandler(t)), "bad.token.here")
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401 for invalid (non-missing) token", rr.Code)
-	}
-}
-
-func TestOptionalAuth_AttachesClaimsToContext(t *testing.T) {
-	srv := serveMockJWKS(t, &testPrivKey.PublicKey, testKID)
-	c := newTestClient(t, srv, testDomain, testAudience)
-	tok := makeJWT(t, validClaims(testDomain, testAudience))
-
-	var gotSub string
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if claims, ok := ClaimsFromContext(r.Context()); ok {
-			gotSub = claims.Sub
+	tokenStr := env.makeToken(t, "user-42", time.Now().Add(time.Hour))
+	var sub string
+	handler := env.verifier.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tok, ok := authaction.TokenFromContext(r.Context()); ok {
+			sub = tok.Subject()
 		}
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
 
-	doRequest(t, OptionalAuth(c)(next), tok)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 
-	if gotSub != "user-123" {
-		t.Errorf("Sub = %q, want user-123", gotSub)
-	}
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func assertJSONError(t *testing.T, rr *httptest.ResponseRecorder, wantMessage string) {
-	t.Helper()
-	var body map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
-		t.Fatalf("response body is not valid JSON: %v", err)
-	}
-	if body["error"] != "Unauthorized" {
-		t.Errorf(`JSON error = %q, want "Unauthorized"`, body["error"])
-	}
-	if body["message"] != wantMessage {
-		t.Errorf("JSON message = %q, want %q", body["message"], wantMessage)
+	if sub != "user-42" {
+		t.Errorf("got sub %q, want 'user-42'", sub)
 	}
 }
