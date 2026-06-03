@@ -1,0 +1,12 @@
+# Binaries
+*.exe
+*.test
+*.out
+
+# Module cache
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
