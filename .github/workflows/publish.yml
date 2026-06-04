@@ -1,13 +1,27 @@
-name: Tag release
+name: Publish to pkg.go.dev
+
 on:
   workflow_dispatch:
+
 jobs:
-  tag:
+  publish:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
-        with: { go-version: "1.21" }
-      - run: go mod tidy && go test ./...
-      # Go modules are published by tagging — no push step needed.
-      # The tag created by the GitHub release triggers pkg.go.dev indexing.
+        with:
+          go-version: '1.21'
+
+      - name: Verify module
+        run: go mod tidy && go build ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Trigger pkg.go.dev indexing
+        run: |
+          MODULE=$(go list -m)
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          curl -s "https://sum.golang.org/lookup/${MODULE}@${VERSION}" || true
