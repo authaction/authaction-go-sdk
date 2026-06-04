@@ -1,6 +1,6 @@
 # authaction-go-sdk
 
-AuthAction JWT verification SDK for Go. Works with **net/http**, **Gin**, and any other Go HTTP framework.
+AuthAction JWT verification SDK for Go. Works with **net/http**, **Gin**, **Echo**, and any other Go HTTP framework.
 
 ## Installation
 
@@ -11,57 +11,72 @@ go get github.com/authaction/authaction-go-sdk
 ## Quick start
 
 ```go
-import "github.com/authaction/authaction-go-sdk"
+import authaction "github.com/authaction/authaction-go-sdk"
 
-verifier, err := authaction.New("myapp.eu.authaction.com", "https://api.myapp.com")
-if err != nil { log.Fatal(err) }
+client, err := authaction.New(authaction.Config{
+    Domain:   "your-tenant.eu.authaction.com",
+    Audience: "https://api.your-app.com",
+})
+if err != nil {
+    log.Fatal(err)
+}
 
-// Verify a raw token
-token, err := verifier.VerifyToken(tokenStr)
-
-// Verify from a request header (nil, nil on missing)
-token, err := verifier.VerifyRequest(r)
-fmt.Println(token.Subject())
+payload, err := client.VerifyToken(ctx, tokenString)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(payload.Sub)
 ```
 
 ## net/http middleware
 
 ```go
 mux := http.NewServeMux()
-mux.Handle("/api/", verifier.Middleware()(apiHandler))
+mux.Handle("/api/", client.Middleware()(apiHandler))
 http.ListenAndServe(":8080", mux)
 
-// In handlers — read the token from context
-token, _ := authaction.TokenFromContext(r.Context())
-fmt.Println(token.Subject())
+func apiHandler(w http.ResponseWriter, r *http.Request) {
+    payload, _ := authaction.TokenFromContext(r.Context())
+    fmt.Fprintln(w, payload.Sub)
+}
 ```
 
 ## Gin
 
 ```go
 r := gin.Default()
-r.Use(verifier.GinMiddleware())
+r.Use(authaction.GinMiddleware(client))
 
 r.GET("/protected", func(c *gin.Context) {
-    tok, _ := authaction.TokenFromGin(c)
-    c.JSON(200, gin.H{"sub": tok.(jwt.Token).Subject()})
+    payload, _ := authaction.TokenFromGin(c)
+    c.JSON(200, gin.H{"sub": payload.Sub})
 })
 ```
 
-## Error types
+## Echo
 
 ```go
-switch err.(type) {
-case *authaction.TokenExpiredError:  // exp in the past
-case *authaction.TokenInvalidError:  // bad signature / issuer / audience
-}
+e := echo.New()
+e.Use(authaction.EchoMiddleware(client))
+
+e.GET("/protected", func(c echo.Context) error {
+    payload, _ := authaction.TokenFromEcho(c)
+    return c.JSON(200, map[string]string{"sub": payload.Sub})
+})
 ```
 
-## Environment variables
+## Error handling
 
-```bash
-AUTHACTION_DOMAIN=your-tenant.eu.authaction.com
-AUTHACTION_AUDIENCE=https://api.your-app.com
+```go
+payload, err := client.VerifyToken(ctx, tokenString)
+switch {
+case errors.Is(err, authaction.ErrTokenExpired):
+    // token expired
+case errors.Is(err, authaction.ErrTokenMissing):
+    // no token in request
+case errors.Is(err, authaction.ErrTokenInvalid):
+    // bad signature, issuer, or audience
+}
 ```
 
 ## License
