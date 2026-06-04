@@ -2,6 +2,10 @@ name: Publish to pkg.go.dev
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. v1.0.0)'
+        required: true
 
 jobs:
   publish:
@@ -9,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -23,5 +29,4 @@ jobs:
       - name: Trigger pkg.go.dev indexing
         run: |
           MODULE=$(go list -m)
-          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          curl -s "https://sum.golang.org/lookup/${MODULE}@${VERSION}" || true
+          curl -s "https://sum.golang.org/lookup/${MODULE}@${{ github.event.inputs.version }}" || true
